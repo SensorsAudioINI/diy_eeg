@@ -10,22 +10,20 @@
   *
   */
 
-// Add imports for audio manipulation
+// Add Library Imports
+import processing.serial.*;
 import ddf.minim.analysis.*;
-import ddf.minim.effects.*;
 import ddf.minim.*;
 
-// AUDIO DECLARATIONS
+// PORT DECLARATIONS
 // -------------------------
 Minim minim;  
 AudioInput fast_in;
 int fastBufferSize = 1024;
-int slowBufferSize = 32768;
+int slowBufferSize = 1024;
 float fastSampleRate = 22050;
-NotchFilter notch;
-boolean notchEnabled = true;
-float NOTCH_FREQ = 50;
-float NOTCH_BW = 1;
+Serial myPort;  // Create object from Serial class
+int LF = 10; // ASCII linefeed
 
 // DATA AND FFT DECLARATIONS
 // -------------------------
@@ -37,82 +35,83 @@ int MAX_FREQ = 100; // The highest frequency we will care about in the zoomed pl
 static float[] highlightStarts = {0.1, 3.5,  7.5, 15.5, 31.5};
 static float[] highlightEnds =   {3.5, 7.5, 15.5, 31.5, 100};
 //   Data stores used for calculating average power in a band
-float balance = 0.95;
+float balance = 0.75;
 float [] currPowers = new float[highlightStarts.length];
 int []   currCounts = new int[highlightStarts.length];
 float []  avgPowers = new float[highlightStarts.length];
 
 // DISPLAY DECLARATIONS
 // -------------------------
-float averageScaling = 0.0;
-float scalingBalance = 0.90;
 float height5; // Height of one of the display bands
 static int TEXT_HEIGHT = 25; // Size of text in pixels
 static int MAX_HEIGHT = 160; // Size of a band
 static float spectrumScale = 4; // Spectrum display rescaling factor
 
 // Special threadsafe class for shifting in new samples
-class FFTBuf implements AudioListener
+class FFTBufSingleAdd
 {
-  private float[] left;
-  private float[] right;
-  
-  FFTBuf(int num_samples){
-    left = new float[num_samples];
-    right = new float[num_samples];
+  private float[] left_ring;
+  private float[] right_ring;
+  private int left_next_idx;
+  private int right_next_idx;
+
+  FFTBufSingleAdd(int num_samples){
+    left_ring = new float[num_samples];
+    right_ring = new float[num_samples];
     for(int i=0; i<num_samples;i++){
-      left[i] = 0;
-      right[i] = 0;
+      left_ring[i] = 0;
+      right_ring[i] = 0;
     }    
+    left_next_idx = 0;
+    right_next_idx = 0;
   }
-  public synchronized void samples(float[] samp){
-    left = addNewSamples(left, samp);
-  }
-  
-  public synchronized void samples(float[] sampL, float[] sampR){
-    left = addNewSamples(left, sampL);
-    right = addNewSamples(right, sampR);
-  }
-  
+
   public synchronized float[] getSamples(){
-    return left;
+    float[] bufferCopy = new float[left_ring.length];
+    int orig_next = left_next_idx;
+    for(int i=0; i<left_ring.length;i++){
+      bufferCopy[i] = left_ring[ (orig_next+i) % left_ring.length ];
+    }
+    return bufferCopy;
   }
   
-  private float[] addNewSamples(float[] oldSamples, float [] newSamples){  
-    // Shift buffer left
-    for(int i=0; i < oldSamples.length - newSamples.length; i++){
-     oldSamples[i] = oldSamples[i+newSamples.length];   
-    }  
-    // Add in new samples
-    for(int i=0; i < newSamples.length; i++){
-     oldSamples[i+(oldSamples.length-newSamples.length)] = newSamples[i];   
-    }
-    return oldSamples;
-  }  
+  private synchronized void addNewSample(float newSample){
+    left_ring[left_next_idx] = newSample;
+    left_next_idx = (left_next_idx + 1) % left_ring.length ;
+  }
 }
-FFTBuf slowSamples = new FFTBuf(slowBufferSize);
+FFTBufSingleAdd slowSamples = new FFTBufSingleAdd(slowBufferSize);
 
 // CODE BEGINS HERE
-// --------------------------------------------------------------
+// -------------------------
 void setup()
 {
+  println(-1%255);
   // Set up display
   size(512, 800);
   rectMode(CORNERS);  
   height5 = height/5;
 
-  // Set up audio
-  minim = new Minim(this);
-  fast_in = minim.getLineIn(Minim.STEREO, fastBufferSize, fastSampleRate);
-  fast_in.addListener( slowSamples );
-  notch = new NotchFilter(NOTCH_FREQ, NOTCH_BW, fastSampleRate);
-  fast_in.addEffect( notch );
+//  // Set up normal FFT
+//  fftCalc = new FFT( fast_in.bufferSize(), fast_in.sampleRate() );
   
-  // Set up normal FFT
-  fftCalc = new FFT( fast_in.bufferSize(), fast_in.sampleRate() );
+//  // create an FFT object for calculating slower signals, same sample rate but with more data
+//  fftSlow = new FFT( slowBufferSize, fast_in.sampleRate() );
   
-  // create an FFT object for calculating slower signals, same sample rate but with more data
-  fftSlow = new FFT( slowBufferSize, fast_in.sampleRate() );
+  // Set up Arduino port
+  String[] ports = Serial.list();
+  println("Opening Port: " + ports[ports.length-1]);
+  String portName = ports[ports.length-1]; //change the 0 to a 1 or 2 etc. to match your port
+  myPort = new Serial(this, portName, 9600, 'E', 8, 2.0);   
+  myPort.bufferUntil(LF);  
+  myPort.clear();
+}
+
+void serialEvent(Serial myPort) {
+  String newData = myPort.readString();
+  float newPoint = float(int(newData.trim())) / 1024.0;
+  println(newData + " | " + newPoint);
+  slowSamples.addNewSample(newPoint);
 }
 
 // Render
@@ -122,22 +121,20 @@ void draw(){
   textSize( 18 );
  
   // Display status
-  drawStatus();
+  //drawStatus();
   
   // perform a forward FFT on the samples in in's mix buffer
-  // note that if in were a MONO file, this would be the same as using in.left or in.right
-  fftCalc.forward( fast_in.mix );
-  fftSlow.forward( slowSamples.getSamples() );
+  //// note that if in were a MONO file, this would be the same as using in.left or in.right
+  //fftCalc.forward( fast_in.mix );
+  //fftSlow.forward( slowSamples.getSamples() );
   
   // The argument is which row it should occupy
   drawLinePlot(2);
-  drawSpectrum(3);
-  drawHighResSpectrum(4);
-  calcAndDrawEEGBins(5);
+  //drawSpectrum(3);
+  //drawHighResSpectrum(4);
+  //calcAndDrawEEGBins(5);
 }
 
-// DRAWING ROUTINES
-// --------------------------------------------------------------
 
 // Draw the text at the top
 void drawStatus(){
@@ -145,8 +142,8 @@ void drawStatus(){
   text("EEG Spectrum Analyzer", width/4, 0.5*TEXT_HEIGHT);  
   text("FFT res. [q/w] (Hz): " + String.format("%.2f",fast_in.sampleRate()/slowBufferSize,3,1), 5, 2.5*TEXT_HEIGHT);
   text("FFT res. [q/w] (s): " + String.format("%.2f",slowBufferSize/fast_in.sampleRate(),3,1), 5, 3.5*TEXT_HEIGHT);
-  text("Averaging [a/s] (%): " + String.format("%02.2f",balance*100), 5, 4.5*TEXT_HEIGHT);
-  text("Notch Filter [z] : " + (notchEnabled? "Yes" : "No"), 5, 5.5*TEXT_HEIGHT);  
+  text("Max Freq. [a/s] (Hz): " + MAX_FREQ, 5, 4.5*TEXT_HEIGHT);
+  text("Averaging [z/x] (%): " + String.format("%02.2f",balance*100), 5, 5.5*TEXT_HEIGHT);
 
   // Right column
   text("Delta (0.1-3 Hz): "  + String.format("%06.2f",avgPowers[0]), width/2, 1.5*TEXT_HEIGHT);
@@ -165,31 +162,24 @@ void keyPressed()
 {
   if ( key == 'q' ){
     slowBufferSize *= 2;
-    fast_in.removeListener( slowSamples );
-    slowSamples = new FFTBuf(slowBufferSize);
-    fast_in.addListener( slowSamples );
+    slowSamples = new FFTBufSingleAdd(slowBufferSize);
     fftSlow = new FFT( slowBufferSize, fast_in.sampleRate() );
   }
   if ( key == 'w' ){
     slowBufferSize = max(slowBufferSize/2, fast_in.bufferSize());
-    fast_in.removeListener( slowSamples );
-    slowSamples = new FFTBuf(slowBufferSize);
-    fast_in.addListener( slowSamples );
+    slowSamples = new FFTBufSingleAdd(slowBufferSize);
     fftSlow = new FFT( slowBufferSize, fast_in.sampleRate() );
   }  
-  if ( key == 'z' ){
-    if(notchEnabled){
-      fast_in.disableEffect( notch );
-      notchEnabled = false;
-    } else {
-      fast_in.enableEffect( notch );
-      notchEnabled = true;
-    }
-  }    
   if ( key == 'a' ){
+    MAX_FREQ -=1;
+  }    
+  if ( key == 's' ){
+    MAX_FREQ +=1;
+  }   
+  if ( key == 'z' ){
     balance = max(balance-0.005,0);
   } 
-  if ( key == 's' ){
+  if ( key == 'x' ){
     balance = min(balance+0.005,1);
   }    
 }
@@ -208,12 +198,12 @@ int getBand(int index, FFT myFFT){
 
 //   Set the color for a band
 void setBandColor(int i, boolean stroke){
-  colorMode(HSB, highlightStarts.length*5, 255, 255);
+  colorMode(HSB, highlightStarts.length*8);
   if(stroke){
-    stroke(i, 255, 255);
+    stroke(i, 100, 100);
   }
   else{
-    fill(i, 255, 255);
+    fill(i, 100, 100);
   }
   colorMode(RGB, 255, 255, 255, 255);  
 }
@@ -223,16 +213,14 @@ void drawLinePlot(int D_IDX){
   // draw the line plot
   noFill();
   int buffer_step = floor(float(slowBufferSize)/width); // Each pixel corresponds to a spot in the buffer
-  float [] localSlowSamples = slowSamples.getSamples(); // Fetch the samples from the FFT
+  float [] localSlowSamples = slowSamples.getSamples(); // Fetch the samples from the buffer
   for(int i = 0; i < width-1; i++)
   {      
-    float brightnessScale = 0.4+0.6*(float(i)/width); // Choose a fading brightness color
+    float brightnessScale = 0.25+0.75*(float(i)/width);
     stroke(0, 62*brightnessScale, 255*brightnessScale);        
     line(i, D_IDX*height5 - height5/2 + height5/2*localSlowSamples[i*buffer_step],
          i+1, D_IDX*height5 - height5/2 + height5/2*localSlowSamples[(i+1)*buffer_step]);           
   }  
-  fill(255, 128);
-  text("Sample History", 5, (D_IDX-1)*height5 + TEXT_HEIGHT);  
 }
 
 //   Draw the spectrum
@@ -258,7 +246,7 @@ void drawSpectrum(int D_IDX){
     line(i, D_IDX*height5, i, D_IDX*height5 - min(MAX_HEIGHT, fftCalc.getBand(i)*spectrumScale));
   }    
   fill(255, 128);
-  text("Spectrum Selected Frequency: " + centerFrequency, 5, (D_IDX-1)*height5 + TEXT_HEIGHT);
+  text("Spectrum Selected Frequency: " + centerFrequency, 5, D_IDX*height5 - TEXT_HEIGHT);
 }
 
 void drawHighResSpectrum(int D_IDX){
@@ -286,7 +274,7 @@ void drawHighResSpectrum(int D_IDX){
     rect(i*w, D_IDX*height5, i*w+w, D_IDX*height5 - min(MAX_HEIGHT, fftSlow.getBand(i)*spectrumScale));
   }
   fill(255, 128);    
-  text("Spectrum Selected Frequency: " + centerFrequency, 5, (D_IDX-1)*height5 + TEXT_HEIGHT);    
+  text("Spectrum Selected Frequency: " + centerFrequency, 5, 4*height5 - TEXT_HEIGHT);    
 }
 
 // Bin the EEG energy and draw it
@@ -305,27 +293,23 @@ void calcAndDrawEEGBins(int D_IDX){
         currPowers[h_i] += fftSlow.getBand(i)*spectrumScale;
         currCounts[h_i] += 1;
       }
-    }   
+    }
   }
   
   // Work in the new power averages
-  float maxPower = 0;
-  for(int i = 0; i < avgPowers.length; i++){     
-    if(Float.isNaN(avgPowers[i])){ // Reset if errors
+  for(int i = 0; i < avgPowers.length; i++){    
+    if(Float.isNaN(avgPowers[i])){
       avgPowers[i] = currPowers[i]/currCounts[i];
     } else {
       avgPowers[i] = avgPowers[i]*balance + (1.0-balance)*currPowers[i]/currCounts[i];
     }    
-    maxPower = max(maxPower,avgPowers[i]);    
   }  
-  // Adjust the scaling of the bars
-  averageScaling = max(maxPower*1.1, averageScaling);
-  averageScaling = averageScaling*scalingBalance + (1-scalingBalance)*maxPower;  
-  
+    
   // Redraw the bands
   int w = ceil( float(width) / (highlightStarts.length+1) );  
   int selected = 0;
   for(int h_i=0; h_i < highlightStarts.length; h_i++){
+    avgPowers[h_i] /= currCounts[h_i];
     // if the mouse is over the spectrum value we're about to draw
     // set the stroke color to red
     setBandColor(h_i, false); 
@@ -334,9 +318,9 @@ void calcAndDrawEEGBins(int D_IDX){
       selected = h_i; // Store which band we've selected        
       fill(255, 255, 255); // Change the highlight fill
     }     
-    rect(h_i*w, D_IDX*height5, h_i*w+w, D_IDX*height5 - min(MAX_HEIGHT, avgPowers[h_i]/averageScaling * MAX_HEIGHT));
+    rect(h_i*w, D_IDX*height5, h_i*w+w, D_IDX*height5 - min(MAX_HEIGHT, avgPowers[h_i]));
   }
   fill(255, 128);    
-  text("(Autoscaling) Spectrum Selected Frequency: " + highlightStarts[selected] + " - " + highlightEnds[selected], 
-    5, (D_IDX-1)*height5 + TEXT_HEIGHT);      
+  text("Spectrum Selected Frequency: " + highlightStarts[selected] + " - " + highlightEnds[selected], 
+    5, D_IDX*height5 - TEXT_HEIGHT);      
 }
