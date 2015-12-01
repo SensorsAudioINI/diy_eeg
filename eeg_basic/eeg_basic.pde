@@ -48,8 +48,11 @@ float averageScaling = 0.0;
 float scalingBalance = 0.90;
 float height5; // Height of one of the display bands
 static int TEXT_HEIGHT = 25; // Size of text in pixels
-static int MAX_HEIGHT = 160; // Size of a band
-static float spectrumScale = 4; // Spectrum display rescaling factor
+static int MAX_HEIGHT = 160-int(TEXT_HEIGHT*1.1); // Size of a band
+float specBalance = 0.99; // Balance for autoscaling - 99% previous, 1% current
+float spectrumScale = 0.1; // Spectrum display rescaling factor
+float highResSpecBalance = 0.95; // Balance for autoscaling - 95% previous, 5% current
+float highResSpectrumScale = 0.1; // Spectrum display rescaling factor
 
 // Special threadsafe class for shifting in new samples
 class FFTBuf implements AudioListener
@@ -129,11 +132,28 @@ void draw(){
   fftCalc.forward( fast_in.mix );
   fftSlow.forward( slowSamples.getSamples() );
   
+  // Calculate autoscaling
+  calcSpecScales();
+  
   // The argument is which row it should occupy
   drawLinePlot(2);
   drawSpectrum(3);
   drawHighResSpectrum(4);
   calcAndDrawEEGBins(5);
+}
+
+void calcSpecScales(){
+  float maxCalc = 0.0;
+  for(int i = 0; i < fftCalc.specSize(); i++){
+    maxCalc = max(maxCalc, fftCalc.getBand(i));    
+  }
+  spectrumScale = specBalance * spectrumScale + (1-specBalance) * maxCalc;
+  
+  float maxSlow = 0.0;
+  for(int i = 0; i < fftSlow.specSize(); i++){
+    maxSlow = max(maxSlow, fftSlow.getBand(i));    
+  }
+  highResSpectrumScale = highResSpecBalance * highResSpectrumScale + (1-highResSpecBalance) * maxSlow;
 }
 
 // DRAWING ROUTINES
@@ -227,7 +247,7 @@ void drawLinePlot(int D_IDX){
   for(int i = 0; i < width-1; i++)
   {      
     float brightnessScale = 0.4+0.6*(float(i)/width); // Choose a fading brightness color
-    stroke(0, 62*brightnessScale, 255*brightnessScale);        
+    stroke(255*brightnessScale, 255*brightnessScale, 255);        
     line(i, D_IDX*height5 - height5/2 + height5/2*localSlowSamples[i*buffer_step],
          i+1, D_IDX*height5 - height5/2 + height5/2*localSlowSamples[(i+1)*buffer_step]);           
   }  
@@ -239,6 +259,7 @@ void drawLinePlot(int D_IDX){
 void drawSpectrum(int D_IDX){
   noFill();
   float centerFrequency = 0;
+  float centerPower = 0;
   for(int i = 0; i < fftCalc.specSize(); i++)
   {
     if(getBand(i, fftCalc) != -1) {
@@ -253,17 +274,19 @@ void drawSpectrum(int D_IDX){
     if ( i == mouseX )
     {
       centerFrequency = fftCalc.indexToFreq(i);
+      centerPower = fftCalc.getBand(i);
       stroke(255, 255, 255);
     }
-    line(i, D_IDX*height5, i, D_IDX*height5 - min(MAX_HEIGHT, fftCalc.getBand(i)*spectrumScale));
+    line(i, D_IDX*height5, i, D_IDX*height5 - min(MAX_HEIGHT, MAX_HEIGHT*fftCalc.getBand(i)/spectrumScale));
   }    
   fill(255, 128);
-  text("Spectrum Selected Frequency: " + centerFrequency, 5, (D_IDX-1)*height5 + TEXT_HEIGHT);
+  text("(Autoscaling) Linear Freq: " + String.format("%.1f",centerFrequency) + " Power " + String.format("%.1f",centerPower), 5, (D_IDX-1)*height5 + TEXT_HEIGHT);
 }
 
 void drawHighResSpectrum(int D_IDX){
   noStroke();  
   float centerFrequency = 0;
+  float centerPower = 0;
   int max_index = fftSlow.freqToIndex(MAX_FREQ);
   int w = ceil( float(width) / (max_index+1) );
   for(int i = 0; i < max_index; i++)
@@ -279,14 +302,15 @@ void drawHighResSpectrum(int D_IDX){
     if ( mouseX >= i*w && mouseX < i*w + w)
     {
       // Insert label text
-      centerFrequency = fftSlow.indexToFreq(i);        
+      centerFrequency = fftSlow.indexToFreq(i);  
+      centerPower = fftSlow.getBand(i);
       // Set up fill for rectangle
       fill(255, 255, 255);        
     }
-    rect(i*w, D_IDX*height5, i*w+w, D_IDX*height5 - min(MAX_HEIGHT, fftSlow.getBand(i)*spectrumScale));
+    rect(i*w, D_IDX*height5, i*w+w, D_IDX*height5 - min(MAX_HEIGHT, MAX_HEIGHT*fftSlow.getBand(i)/highResSpectrumScale));
   }
   fill(255, 128);    
-  text("Spectrum Selected Frequency: " + centerFrequency, 5, (D_IDX-1)*height5 + TEXT_HEIGHT);    
+  text("(Autoscaling) 0-100 Hz Freq: " + String.format("%.1f",centerFrequency) + " Power " + String.format("%.1f",centerPower), 5, (D_IDX-1)*height5 + TEXT_HEIGHT);
 }
 
 // Bin the EEG energy and draw it
@@ -302,7 +326,7 @@ void calcAndDrawEEGBins(int D_IDX){
   for(int i = 0; i <= max_index; i++){
     for(int h_i=0; h_i<highlightStarts.length; h_i++){
       if(fftSlow.freqToIndex(highlightStarts[h_i]) <= i && fftSlow.freqToIndex(highlightEnds[h_i]) > i){
-        currPowers[h_i] += fftSlow.getBand(i)*spectrumScale;
+        currPowers[h_i] += fftSlow.getBand(i);
         currCounts[h_i] += 1;
       }
     }   
@@ -319,7 +343,7 @@ void calcAndDrawEEGBins(int D_IDX){
     maxPower = max(maxPower,avgPowers[i]);    
   }  
   // Adjust the scaling of the bars
-  averageScaling = max(maxPower*1.1, averageScaling);
+  averageScaling = max(maxPower*1, averageScaling);
   averageScaling = averageScaling*scalingBalance + (1-scalingBalance)*maxPower;  
   
   // Redraw the bands
