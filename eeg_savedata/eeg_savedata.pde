@@ -15,6 +15,11 @@ import ddf.minim.analysis.*;
 import ddf.minim.effects.*;
 import ddf.minim.*;
 
+// File save
+float curr_file_idx = 0;
+boolean fileSaving = false;
+PrintWriter output;
+
 // AUDIO DECLARATIONS
 // -------------------------
 Minim minim;  
@@ -89,7 +94,10 @@ class FFTBuf implements AudioListener
     }  
     // Add in new samples
     for(int i=0; i < newSamples.length; i++){
-     oldSamples[i+(oldSamples.length-newSamples.length)] = newSamples[i];   
+     oldSamples[i+(oldSamples.length-newSamples.length)] = newSamples[i];
+     if(fileSaving){
+       output.println(newSamples[i]);
+     }
     }
     return oldSamples;
   }  
@@ -163,7 +171,8 @@ void calcSpecScales(){
 // Draw the text at the top
 void drawStatus(){
   fill(255, 128); // Color for text
-  text("EEG Spectrum Analyzer", width/4, 0.5*TEXT_HEIGHT);  
+  text("EEG Spectrum Analyzer - Save Data (Press 'M' to Mark)", 20, 0.5*TEXT_HEIGHT);
+  text("Saving [k/l] " + (fileSaving ? "(ON): " : "(OFF): ") + String.format("%03.0f",curr_file_idx)+".txt" , 5, 1.5*TEXT_HEIGHT);
   text("FFT res. [q/w] (Hz): " + String.format("%.2f",fast_in.sampleRate()/slowBufferSize,3,1), 5, 2.5*TEXT_HEIGHT);
   text("FFT res. [q/w] (s): " + String.format("%.2f",slowBufferSize/fast_in.sampleRate(),3,1), 5, 3.5*TEXT_HEIGHT);
   text("Averaging [a/s] (%): " + String.format("%02.2f",balance*100), 5, 4.5*TEXT_HEIGHT);
@@ -213,6 +222,22 @@ void keyPressed()
   if ( key == 's' ){
     balance = min(balance+0.005,1);
   }    
+  if ( key == 'k' ){
+    fileSaving = true;
+    output = createWriter("samples_" + String.format("%03.0f",curr_file_idx)+".txt");
+    curr_file_idx += 1;
+  }      
+  if (key == 'l'){
+    if(fileSaving){
+      output.flush();
+      output.close();
+      fileSaving = false;
+    }
+  }
+  if(key=='m'){
+    output.flush();
+    output.println("mark");
+  }
 }
 
 // DISPLAY ROUTINES

@@ -15,6 +15,25 @@ import ddf.minim.analysis.*;
 import ddf.minim.effects.*;
 import ddf.minim.*;
 
+// PONG DECLARATIONS
+// -------------------------
+float left_paddle_y = 0;
+float left_paddle_x = 10;
+float right_paddle_y = 0;
+float right_paddle_x = 492;
+float ball_x = 20;
+float ball_y = 20;
+float pong_score = 0;
+int last_draw_ms = 0;
+float direction_x = 0;
+float direction_y = 0;
+float DEFAULT_SPEED = 0.1;
+float speed = DEFAULT_SPEED;
+float BALL_RADIUS = 7;
+float PADDLE_WIDTH = 5;
+float PADDLE_HEIGHT = 40;
+float AI_SPEED = 0.5;
+float ALPHA_THRESH = 1;
 // AUDIO DECLARATIONS
 // -------------------------
 Minim minim;  
@@ -117,6 +136,10 @@ void setup()
   
   // create an FFT object for calculating slower signals, same sample rate but with more data
   fftSlow = new FFT( slowBufferSize, fast_in.sampleRate() );
+  
+  // Initialize pong
+  last_draw_ms = millis();
+  resetBall();
 }
 
 // Render
@@ -138,9 +161,16 @@ void draw(){
   
   // The argument is which row it should occupy
   drawLinePlot(2);
-  drawSpectrum(3);
-  drawHighResSpectrum(4);
-  calcAndDrawEEGBins(5);
+  drawHighResSpectrum(3);
+  calcAndDrawEEGBins(4);
+ 
+  // Calculate paddle movement from alpha
+  updateLeftPaddle();
+  
+  // Update ball and paddles
+  updatePong();
+  drawPong(5);  
+  
 }
 
 void calcSpecScales(){
@@ -213,6 +243,12 @@ void keyPressed()
   if ( key == 's' ){
     balance = min(balance+0.005,1);
   }    
+  if ( key == 'n' ){
+    left_paddle_y = max(left_paddle_y-2, 0);
+  } 
+  if ( key == 'm' ){
+    left_paddle_y = min(left_paddle_y+2, MAX_HEIGHT-PADDLE_HEIGHT);
+  }      
 }
 
 // DISPLAY ROUTINES
@@ -260,33 +296,33 @@ void drawLinePlot(int D_IDX){
   lineScale = lineBalance * lineScale + (1-lineBalance) * maxCalc;  //Autoscale
 }
 
-//   Draw the spectrum
-void drawSpectrum(int D_IDX){
-  noFill();
-  float centerFrequency = 0;
-  float centerPower = 0;
-  for(int i = 0; i < fftCalc.specSize(); i++)
-  {
-    if(getBand(i, fftCalc) != -1) {
-      setBandColor(getBand(i, fftCalc), true);
-    }
-    else{
-      stroke(0, 62, 255);
-    }      
+////   Draw the spectrum
+//void drawSpectrum(int D_IDX){
+//  noFill();
+//  float centerFrequency = 0;
+//  float centerPower = 0;
+//  for(int i = 0; i < fftCalc.specSize(); i++)
+//  {
+//    if(getBand(i, fftCalc) != -1) {
+//      setBandColor(getBand(i, fftCalc), true);
+//    }
+//    else{
+//      stroke(0, 62, 255);
+//    }      
 
-    // if the mouse is over the spectrum value we're about to draw
-    // set the stroke color to red
-    if ( i == mouseX )
-    {
-      centerFrequency = fftCalc.indexToFreq(i);
-      centerPower = fftCalc.getBand(i);
-      stroke(255, 255, 255);
-    }
-    line(i, D_IDX*height5, i, D_IDX*height5 - min(MAX_HEIGHT, MAX_HEIGHT*fftCalc.getBand(i)/spectrumScale));
-  }    
-  fill(255, 128);
-  text("(Autoscaling) Linear Freq: " + String.format("%.1f",centerFrequency) + " Power " + String.format("%.1f",centerPower), 5, (D_IDX-1)*height5 + TEXT_HEIGHT);
-}
+//    // if the mouse is over the spectrum value we're about to draw
+//    // set the stroke color to red
+//    if ( i == mouseX )
+//    {
+//      centerFrequency = fftCalc.indexToFreq(i);
+//      centerPower = fftCalc.getBand(i);
+//      stroke(255, 255, 255);
+//    }
+//    line(i, D_IDX*height5, i, D_IDX*height5 - min(MAX_HEIGHT, MAX_HEIGHT*fftCalc.getBand(i)/spectrumScale));
+//  }    
+//  fill(255, 128);
+//  text("(Autoscaling) Linear Freq: " + String.format("%.1f",centerFrequency) + " Power " + String.format("%.1f",centerPower), 5, (D_IDX-1)*height5 + TEXT_HEIGHT);
+//}
 
 void drawHighResSpectrum(int D_IDX){
   noStroke();  
@@ -368,4 +404,126 @@ void calcAndDrawEEGBins(int D_IDX){
   fill(255, 128);    
   text("(Autoscaling) Spectrum Selected Frequency: " + highlightStarts[selected] + " - " + highlightEnds[selected], 
     5, (D_IDX-1)*height5 + TEXT_HEIGHT);      
+}
+
+void drawPong(int D_IDX){
+  float zero_pos = D_IDX*height5-MAX_HEIGHT;
+  stroke(255, 255, 255); 
+  line(0, zero_pos-1, width, zero_pos-1);
+  noStroke();    
+  // Draw self
+  fill(0, 68, 255);  
+  rect(left_paddle_x, zero_pos+left_paddle_y, left_paddle_x+PADDLE_WIDTH, zero_pos+left_paddle_y+PADDLE_HEIGHT);
+  //Draw opponent
+  fill(255, 255, 0);  
+  rect(right_paddle_x, zero_pos+right_paddle_y, right_paddle_x+PADDLE_WIDTH, zero_pos+right_paddle_y+PADDLE_HEIGHT);
+  // Draw ball
+  fill(255, 255, 255);
+  ellipse(ball_x, zero_pos+ball_y, BALL_RADIUS*2, BALL_RADIUS*2);
+  text("Score: " + pong_score + " Speed: " + String.format("%.3f", speed), 5, (D_IDX-1)*height5 + TEXT_HEIGHT);
+}
+
+void updatePong(){
+  int curr_time = millis();
+  float elapsed_time = curr_time - last_draw_ms;
+  
+  // Update ball position
+  ball_x += direction_x * speed * elapsed_time;
+  ball_y += direction_y * speed * elapsed_time;
+  
+  // Handle boundaries
+  if(ball_y - BALL_RADIUS < 0){
+    float overshoot = 0 - (ball_y - BALL_RADIUS);
+    ball_y = 0 + overshoot + BALL_RADIUS;
+    direction_y = abs(direction_y);
+  }
+  if(ball_y + BALL_RADIUS > MAX_HEIGHT){
+    ball_y = MAX_HEIGHT - (ball_y+BALL_RADIUS-MAX_HEIGHT) - BALL_RADIUS;
+    direction_y = -abs(direction_y);
+  }
+  
+  // Handle collisions - left paddle
+  if(ball_x-BALL_RADIUS <= left_paddle_x+PADDLE_WIDTH){
+    // Decide if left paddle caught it
+    if(ball_y >= left_paddle_y && ball_y <= left_paddle_y+PADDLE_HEIGHT){
+      float overshoot = left_paddle_x+PADDLE_WIDTH-(ball_x-BALL_RADIUS);
+      ball_x = left_paddle_x+PADDLE_WIDTH+overshoot+BALL_RADIUS;
+      direction_x = abs(direction_x);  
+    }
+    // Check for an edge hit - bottom
+    if(dist(ball_x, ball_y, left_paddle_x+PADDLE_WIDTH, left_paddle_y+PADDLE_HEIGHT) <= BALL_RADIUS){
+      direction_x = abs(direction_x);
+      direction_y = abs(direction_y);
+      speed = speed * 1.5;      
+    }
+    // Check for an edge hit - top
+    if(dist(ball_x, ball_y, left_paddle_x+PADDLE_WIDTH, left_paddle_y) <= BALL_RADIUS){
+      direction_x = abs(direction_x);
+      direction_y = -abs(direction_y);
+      speed = speed * 1.5;      
+    }    
+  }  
+
+  // Handle collisions - right paddle
+  if(ball_x+BALL_RADIUS >= right_paddle_x){
+    // Decide if right paddle caught it
+    if(ball_y >= right_paddle_y && ball_y <= right_paddle_y+PADDLE_HEIGHT){
+      float overshoot = ball_x+BALL_RADIUS - right_paddle_x;
+      ball_x = right_paddle_x - overshoot-BALL_RADIUS;
+      direction_x = -abs(direction_x);
+      speed = DEFAULT_SPEED;      
+    }
+    // Check for an edge hit - bottom
+    if(dist(ball_x, ball_y, right_paddle_x, right_paddle_y+PADDLE_HEIGHT) <= BALL_RADIUS){
+      direction_x = -abs(direction_x);
+      direction_y = abs(direction_y);
+      speed = speed * 1.5;      
+    }
+    // Check for an edge hit - top
+    if(dist(ball_x, ball_y, right_paddle_x, right_paddle_y) <= BALL_RADIUS){
+      direction_x = -abs(direction_x);
+      direction_y = -abs(direction_y);
+      speed = speed * 1.5;
+    }        
+  }    
+  // Handle out of bounds
+  if(ball_x <= 0){
+    pong_score -= 10;
+    resetBall();
+  }
+  if(ball_x >= width){
+    pong_score += 10;
+    resetBall();
+  }
+  
+  // Update AI
+  if(ball_y > right_paddle_y+PADDLE_WIDTH/2){
+    right_paddle_y += AI_SPEED;
+  } else{
+    right_paddle_y -= AI_SPEED;
+  }
+  
+  last_draw_ms = millis();
+}
+
+void resetBall(){
+  ball_x = left_paddle_x + 2 * PADDLE_WIDTH;
+  ball_y = random(0, MAX_HEIGHT);
+  direction_x = 1;
+  direction_y = 1;
+  speed = DEFAULT_SPEED;
+}
+
+void updateLeftPaddle(){
+ if(avgPowers[2] / avgPowers[0] > ALPHA_THRESH && avgPowers[0] > 1){
+    left_paddle_y = max(left_paddle_y-1, 0);
+    // Give bonus for alpha waves
+    if(direction_x > 0){
+      speed = speed * 1.01;
+    } else {
+      speed = max(speed * 0.995, 0.03);
+    }
+ } else {
+    left_paddle_y = min(left_paddle_y+1, MAX_HEIGHT-PADDLE_HEIGHT);   
+ }
 }
