@@ -20,14 +20,14 @@ import ddf.minim.*;
 float left_paddle_y = 0;
 float left_paddle_x = 10;
 float right_paddle_y = 0;
-float right_paddle_x = 492;
+float right_paddle_x = 0;
 float ball_x = 20;
 float ball_y = 20;
 float pong_score = 0;
 int last_draw_ms = 0;
 float direction_x = 0;
 float direction_y = 0;
-float DEFAULT_SPEED = 0.1;
+float DEFAULT_SPEED = 0.2;
 float speed = DEFAULT_SPEED;
 float BALL_RADIUS = 7;
 float PADDLE_WIDTH = 5;
@@ -120,7 +120,7 @@ FFTBuf slowSamples = new FFTBuf(slowBufferSize);
 void setup()
 {
   // Set up display
-  size(512, 800);
+  size(800, 960);
   rectMode(CORNERS);  
   height5 = height/5;
 
@@ -140,6 +140,7 @@ void setup()
   // Initialize pong
   last_draw_ms = millis();
   resetBall();
+  right_paddle_x = width-10;
 }
 
 // Render
@@ -193,18 +194,18 @@ void calcSpecScales(){
 // Draw the text at the top
 void drawStatus(){
   fill(255, 128); // Color for text
-  text("EEG Spectrum Analyzer", width/4, 0.5*TEXT_HEIGHT);  
+  text("EEG Spectrum Analyzer: PONG", width/4, 0.5*TEXT_HEIGHT);  
   text("FFT res. [q/w] (Hz): " + String.format("%.2f",fast_in.sampleRate()/slowBufferSize,3,1), 5, 2.5*TEXT_HEIGHT);
   text("FFT res. [q/w] (s): " + String.format("%.2f",slowBufferSize/fast_in.sampleRate(),3,1), 5, 3.5*TEXT_HEIGHT);
   text("Averaging [a/s] (%): " + String.format("%02.2f",balance*100), 5, 4.5*TEXT_HEIGHT);
   text("Notch Filter [z] : " + (notchEnabled? "Yes" : "No"), 5, 5.5*TEXT_HEIGHT);  
 
   // Right column
-  text("Delta (0.1-3 Hz): "  + String.format("%06.2f",avgPowers[0]), width/2, 1.5*TEXT_HEIGHT);
-  text("Theta (4-7 Hz): "    + String.format("%06.2f",avgPowers[1]), width/2, 2.5*TEXT_HEIGHT);
-  text("Alpha (8-15 Hz): "   + String.format("%06.2f",avgPowers[2]), width/2, 3.5*TEXT_HEIGHT);
-  text("Beta (16-31 Hz): "   + String.format("%06.2f",avgPowers[3]), width/2, 4.5*TEXT_HEIGHT);
-  text("Gamma (32-100 Hz): " + String.format("%06.2f",avgPowers[4]), width/2, 5.5*TEXT_HEIGHT);
+  text("Delta (0.1-3 Hz): "  + String.format("%06.2f",avgPowers[0]), width/2, 2.5*TEXT_HEIGHT);
+  text("Theta (4-7 Hz): "    + String.format("%06.2f",avgPowers[1]), width/2, 3.5*TEXT_HEIGHT);
+  text("Alpha (8-15 Hz): "   + String.format("%06.2f",avgPowers[2]), width/2, 4.5*TEXT_HEIGHT);
+  text("Beta (16-31 Hz): "   + String.format("%06.2f",avgPowers[3]), width/2, 5.5*TEXT_HEIGHT);
+  text("Gamma (32-100 Hz): " + String.format("%06.2f",avgPowers[4]), width/2, 6.5*TEXT_HEIGHT);
   
   // Draw border
   stroke(128,128,128);
@@ -498,9 +499,9 @@ void updatePong(){
   
   // Update AI
   if(ball_y > right_paddle_y+PADDLE_WIDTH/2){
-    right_paddle_y += AI_SPEED;
+    right_paddle_y = min(right_paddle_y + AI_SPEED, MAX_HEIGHT-PADDLE_HEIGHT);
   } else{
-    right_paddle_y -= AI_SPEED;
+    right_paddle_y = max(0, right_paddle_y-AI_SPEED);
   }
   
   last_draw_ms = millis();
@@ -516,14 +517,19 @@ void resetBall(){
 
 void updateLeftPaddle(){
  if(avgPowers[2] / avgPowers[0] > ALPHA_THRESH && avgPowers[0] > 1){
-    left_paddle_y = max(left_paddle_y-1, 0);
+    //left_paddle_y = max(left_paddle_y-1, 0);
     // Give bonus for alpha waves
     if(direction_x > 0){
-      speed = speed * 1.01;
+      speed = min(speed * 1.01, 2*DEFAULT_SPEED);
     } else {
-      speed = max(speed * 0.995, 0.03);
+      speed = max(speed * 0.995, DEFAULT_SPEED/10);
     }
  } else {
-    left_paddle_y = min(left_paddle_y+1, MAX_HEIGHT-PADDLE_HEIGHT);   
+    //left_paddle_y = min(left_paddle_y+1, MAX_HEIGHT-PADDLE_HEIGHT);
+    // Gradually bring speed back
+    if (speed < DEFAULT_SPEED) {
+      speed = 0.99 * speed + 0.01 * DEFAULT_SPEED;        
+    }
+    
  }
 }
