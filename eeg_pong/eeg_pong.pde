@@ -27,12 +27,13 @@ float pong_score = 0;
 int last_draw_ms = 0;
 float direction_x = 0;
 float direction_y = 0;
-float DEFAULT_SPEED = 0.2;
+float DEFAULT_SPEED = 0.15;
 float speed = DEFAULT_SPEED;
 float BALL_RADIUS = 7;
 float PADDLE_WIDTH = 5;
 float PADDLE_HEIGHT = 40;
-float AI_SPEED = 0.5;
+float AI_SPEED = 1;
+float PLAYER_SPEED = 4;
 float ALPHA_THRESH = 1;
 // AUDIO DECLARATIONS
 // -------------------------
@@ -245,10 +246,10 @@ void keyPressed()
     balance = min(balance+0.005,1);
   }    
   if ( key == 'n' ){
-    left_paddle_y = max(left_paddle_y-2, 0);
+    left_paddle_y = max(left_paddle_y-PLAYER_SPEED, 0);
   } 
   if ( key == 'm' ){
-    left_paddle_y = min(left_paddle_y+2, MAX_HEIGHT-PADDLE_HEIGHT);
+    left_paddle_y = min(left_paddle_y+PLAYER_SPEED, MAX_HEIGHT-PADDLE_HEIGHT);
   }      
 }
 
@@ -520,15 +521,15 @@ void updateLeftPaddle(){
     //left_paddle_y = max(left_paddle_y-1, 0);
     // Give bonus for alpha waves
     if(direction_x > 0){
-      speed = min(speed * 1.01, 2*DEFAULT_SPEED);
+      //speed = min(speed * 1.005, 2*DEFAULT_SPEED);
     } else {
-      speed = max(speed * 0.995, DEFAULT_SPEED/10);
+      speed = max(speed * 0.995, DEFAULT_SPEED/5);
     }
  } else {
     //left_paddle_y = min(left_paddle_y+1, MAX_HEIGHT-PADDLE_HEIGHT);
     // Gradually bring speed back
     if (speed < DEFAULT_SPEED) {
-      speed = 0.99 * speed + 0.01 * DEFAULT_SPEED;        
+      speed = 0.995 * speed + 0.005 * DEFAULT_SPEED;        
     }
     
  }
