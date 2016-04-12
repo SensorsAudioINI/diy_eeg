@@ -19,6 +19,7 @@ import ddf.minim.*;
 float curr_file_idx = 0;
 boolean fileSaving = false;
 PrintWriter output;
+float decimate = 4;
 
 // AUDIO DECLARATIONS
 // -------------------------
@@ -95,7 +96,7 @@ class FFTBuf implements AudioListener
     // Add in new samples
     for(int i=0; i < newSamples.length; i++){
      oldSamples[i+(oldSamples.length-newSamples.length)] = newSamples[i];
-     if(fileSaving){
+     if(fileSaving && (i%decimate == 0)){
        output.println(newSamples[i]);
      }
     }

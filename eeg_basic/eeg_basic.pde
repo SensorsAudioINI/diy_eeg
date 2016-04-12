@@ -18,120 +18,90 @@ import ddf.minim.*;
 // AUDIO DECLARATIONS
 // -------------------------
 Minim minim;  
-AudioInput fast_in;
-int fastBufferSize = 1024;
-int slowBufferSize = 32768;
-float fastSampleRate = 22050;
+AudioInput line_in;
+int instBufferSize   =  1024;
+int longerBufferSize = 32768;
+float sampleRate     = 22050;
 NotchFilter notch;
-boolean notchEnabled = true;
-float NOTCH_FREQ = 50;
-float NOTCH_BW = 1;
+boolean notchEnabled =  true;
+float NOTCH_FREQ     =    50;
+float NOTCH_BW       =     1;
 
 // DATA AND FFT DECLARATIONS
 // -------------------------
 //   FFT objects
-FFT fftCalc;
-FFT fftSlow;
+FFT fftInst;   // Instantaneous, shorter-buffer FFT
+FFT fftLonger; // Longer-buffer FFT that supports lower frequencies
 //   Key ranges for EEG
 int MAX_FREQ = 100; // The highest frequency we will care about in the zoomed plot
+//   Start and end frequencies of the bar, e.g., 0.1-3.5, 3.5-7.5, 7.5-15.5, etc.
 static float[] highlightStarts = {0.1, 3.5,  7.5, 15.5, 31.5};
 static float[] highlightEnds =   {3.5, 7.5, 15.5, 31.5, 100};
 //   Data stores used for calculating average power in a band
-float balance = 0.95;
+float balance = 0.95; // Ratio of running average (95% previous, 5% new)
 float [] currPowers = new float[highlightStarts.length];
-int []   currCounts = new int[highlightStarts.length];
+int   [] currCounts = new   int[highlightStarts.length];
 float []  avgPowers = new float[highlightStarts.length];
 
 // DISPLAY DECLARATIONS
 // -------------------------
+// REDO ALL THIS
 float averageScaling = 0.0;
 float scalingBalance = 0.90;
 float height5; // Height of one of the display bands
 static int TEXT_HEIGHT = 25; // Size of text in pixels
-static int MAX_HEIGHT = 160-int(TEXT_HEIGHT*1.1); // Size of a band
-float specBalance = 0.99; // Balance for autoscaling - 99% previous, 1% current
-float spectrumScale = 0.1; // Spectrum display rescaling factor
-float highResSpecBalance = 0.95; // Balance for autoscaling - 95% previous, 5% current
-float highResSpectrumScale = 0.1; // Spectrum display rescaling factor
+static int MAX_HEIGHT = 160-int(TEXT_HEIGHT*1.1); // Drawable size of a band
+float fullSpecBalance = 0.99; // Balance for autoscaling - 99% previous, 1% current
+float fullSpectrumScale = 0.1; // Spectrum display rescaling factor
+float EEGSpecBalance = 0.95; // Balance for autoscaling the 0-100 range: 95% previous, 5% current
+float EEGSpectrumScale = 0.1; // Spectrum display rescaling factor
 float lineScale = 20;
 float lineBalance = 0.95;
-// Special threadsafe class for shifting in new samples
-class FFTBuf implements AudioListener
-{
-  private float[] left;
-  private float[] right;
-  
-  FFTBuf(int num_samples){
-    left = new float[num_samples];
-    right = new float[num_samples];
-    for(int i=0; i<num_samples;i++){
-      left[i] = 0;
-      right[i] = 0;
-    }    
-  }
-  public synchronized void samples(float[] samp){
-    left = addNewSamples(left, samp);
-  }
-  
-  public synchronized void samples(float[] sampL, float[] sampR){
-    left = addNewSamples(left, sampL);
-    right = addNewSamples(right, sampR);
-  }
-  
-  public synchronized float[] getSamples(){
-    return left;
-  }
-  
-  private float[] addNewSamples(float[] oldSamples, float [] newSamples){  
-    // Shift buffer left
-    for(int i=0; i < oldSamples.length - newSamples.length; i++){
-     oldSamples[i] = oldSamples[i+newSamples.length];   
-    }  
-    // Add in new samples
-    for(int i=0; i < newSamples.length; i++){
-     oldSamples[i+(oldSamples.length-newSamples.length)] = newSamples[i];   
-    }
-    return oldSamples;
-  }  
-}
-FFTBuf slowSamples = new FFTBuf(slowBufferSize);
+
+// Instantiate the special FFT shift-buffer
+FFTBuf longFFTBuf = new FFTBuf(longerBufferSize);
 
 // CODE BEGINS HERE
 // --------------------------------------------------------------
 void setup()
 {
-  // Set up display
+  // Set up display (in pixels)
   size(512, 800);
+  // Set up how we draw rectangles (by specifying corners)
   rectMode(CORNERS);  
+  // Set up how big each section is
   height5 = height/5;
 
   // Set up audio
   minim = new Minim(this);
-  fast_in = minim.getLineIn(Minim.STEREO, fastBufferSize, fastSampleRate);
-  fast_in.addListener( slowSamples );
-  notch = new NotchFilter(NOTCH_FREQ, NOTCH_BW, fastSampleRate);
-  fast_in.addEffect( notch );
+  line_in = minim.getLineIn(Minim.STEREO, instBufferSize, sampleRate);
+  line_in.addListener( longFFTBuf );
+  notch = new NotchFilter(NOTCH_FREQ, NOTCH_BW, line_in.sampleRate());
+  line_in.addEffect( notch );
   
   // Set up normal FFT
-  fftCalc = new FFT( fast_in.bufferSize(), fast_in.sampleRate() );
+  fftInst = new FFT( line_in.bufferSize(), line_in.sampleRate() );
   
   // create an FFT object for calculating slower signals, same sample rate but with more data
-  fftSlow = new FFT( slowBufferSize, fast_in.sampleRate() );
+  fftLonger = new FFT( longerBufferSize, line_in.sampleRate() );
 }
 
 // Render
 void draw(){
   
+  // Black background
   background(0);
+  // Text size is 18pt
   textSize( 18 );
  
-  // Display status
-  drawStatus();
+  // Display status - the text at the top
+  drawTopText();
   
-  // perform a forward FFT on the samples in in's mix buffer
-  // note that if in were a MONO file, this would be the same as using in.left or in.right
-  fftCalc.forward( fast_in.mix );
-  fftSlow.forward( slowSamples.getSamples() );
+  // Perform a forward FFT on the samples in line_in's mix buffer;
+  //   of course, mix vs left vs right doesn't matter if MONO, which it is.
+  fftInst.forward( line_in.mix );
+  // Also do an FFT of the shift buffer
+  fftLonger.forward( longFFTBuf.getSamples() );
   
   // Calculate autoscaling
   calcSpecScales();
@@ -144,28 +114,31 @@ void draw(){
 }
 
 void calcSpecScales(){
-  float maxCalc = 0.0;
-  for(int i = 0; i < fftCalc.specSize(); i++){
-    maxCalc = max(maxCalc, fftCalc.getBand(i));    
+  // Loop over all the spectrogram values, find the maximum power
+  float maxVal = 0.0;
+  for(int i = 0; i < fftInst.specSize(); i++){
+    maxVal = max(maxVal, fftInst.getBand(i));    
   }
-  spectrumScale = specBalance * spectrumScale + (1-specBalance) * maxCalc;
+  fullSpectrumScale = fullSpecBalance * fullSpectrumScale + (1-fullSpecBalance) * maxVal;
   
-  float maxSlow = 0.0;
-  for(int i = 0; i < fftSlow.specSize(); i++){
-    maxSlow = max(maxSlow, fftSlow.getBand(i));    
+  // Loop over the longer FFT buffer, do the same
+  float maxLonger = 0.0;
+  for(int i = 0; i < fftLonger.specSize(); i++){
+    maxLonger = max(maxLonger, fftLonger.getBand(i));    
   }
-  highResSpectrumScale = highResSpecBalance * highResSpectrumScale + (1-highResSpecBalance) * maxSlow;
+  EEGSpectrumScale = EEGSpecBalance * EEGSpectrumScale + (1-EEGSpecBalance) * maxLonger;
 }
 
 // DRAWING ROUTINES
 // --------------------------------------------------------------
 
 // Draw the text at the top
-void drawStatus(){
+void drawTopText(){
   fill(255, 128); // Color for text
+  // Arguments for text is (text, x start, y start)
   text("EEG Spectrum Analyzer", width/4, 0.5*TEXT_HEIGHT);  
-  text("FFT res. [q/w] (Hz): " + String.format("%.2f",fast_in.sampleRate()/slowBufferSize,3,1), 5, 2.5*TEXT_HEIGHT);
-  text("FFT res. [q/w] (s): " + String.format("%.2f",slowBufferSize/fast_in.sampleRate(),3,1), 5, 3.5*TEXT_HEIGHT);
+  text("FFT res. [q/w] (Hz): " + String.format("%.2f",line_in.sampleRate()/longerBufferSize,3,1), 5, 2.5*TEXT_HEIGHT);
+  text("FFT res. [q/w] (s): " + String.format("%.2f",longerBufferSize/line_in.sampleRate(),3,1), 5, 3.5*TEXT_HEIGHT);
   text("Averaging [a/s] (%): " + String.format("%02.2f",balance*100), 5, 4.5*TEXT_HEIGHT);
   text("Notch Filter [z] : " + (notchEnabled? "Yes" : "No"), 5, 5.5*TEXT_HEIGHT);  
 
@@ -181,29 +154,32 @@ void drawStatus(){
   rect(0, height5-2, width, height5);
 }
 
-// Handle changes
+// Handle user input
 void keyPressed()
 {
   if ( key == 'q' ){
-    slowBufferSize *= 2;
-    fast_in.removeListener( slowSamples );
-    slowSamples = new FFTBuf(slowBufferSize);
-    fast_in.addListener( slowSamples );
-    fftSlow = new FFT( slowBufferSize, fast_in.sampleRate() );
+    longerBufferSize *= 2;
+    // Remove the buffer and reinitialize with longer length
+    line_in.removeListener( longFFTBuf );
+    longFFTBuf = new FFTBuf(longerBufferSize);
+    line_in.addListener( longFFTBuf );
+    fftLonger = new FFT( longerBufferSize, line_in.sampleRate() );
   }
   if ( key == 'w' ){
-    slowBufferSize = max(slowBufferSize/2, fast_in.bufferSize());
-    fast_in.removeListener( slowSamples );
-    slowSamples = new FFTBuf(slowBufferSize);
-    fast_in.addListener( slowSamples );
-    fftSlow = new FFT( slowBufferSize, fast_in.sampleRate() );
+    longerBufferSize = max(longerBufferSize/2, line_in.bufferSize());
+    // Remove the buffer and reinitialize with shorter length     
+    line_in.removeListener( longFFTBuf );
+    longFFTBuf = new FFTBuf(longerBufferSize);
+    line_in.addListener( longFFTBuf );
+    fftLonger = new FFT( longerBufferSize, line_in.sampleRate() );
   }  
   if ( key == 'z' ){
+    // Toggle use of the notch filter
     if(notchEnabled){
-      fast_in.disableEffect( notch );
+      line_in.disableEffect( notch );
       notchEnabled = false;
     } else {
-      fast_in.enableEffect( notch );
+      line_in.enableEffect( notch );
       notchEnabled = true;
     }
   }    
@@ -243,17 +219,17 @@ void setBandColor(int i, boolean stroke){
 void drawLinePlot(int D_IDX){
   // draw the line plot
   noFill();
-  int buffer_step = floor(float(slowBufferSize)/width); // Each pixel corresponds to a spot in the buffer
-  float [] localSlowSamples = slowSamples.getSamples(); // Fetch the samples from the FFT
+  int buffer_step = floor(float(longerBufferSize)/width); // Each pixel corresponds to a spot in the buffer
+  float [] localFFTSamples = longFFTBuf.getSamples(); // Fetch the samples from the FFT
   float maxCalc = 0;
   for(int i = 0; i < width-1; i++)
   {      
     float brightnessScale = 0.4+0.6*(float(i)/width); // Choose a fading brightness color
     stroke(255*brightnessScale, 255*brightnessScale, 255);      
-    float height1 = height5/2 + constrain(height5/2*localSlowSamples[i*buffer_step]/lineScale, -height5/2, height5/2);
-    float height2 = height5/2 + constrain(height5/2*localSlowSamples[(i+1)*buffer_step]/lineScale, -height5/2, height5/2);
+    float height1 = height5/2 + constrain(height5/2*localFFTSamples[i*buffer_step]/lineScale, -height5/2, height5/2);
+    float height2 = height5/2 + constrain(height5/2*localFFTSamples[(i+1)*buffer_step]/lineScale, -height5/2, height5/2);
     line(i, D_IDX*height5 - height1, i+1, D_IDX*height5 - height2);
-    maxCalc = max(maxCalc, abs(localSlowSamples[i*buffer_step]), abs(localSlowSamples[(i+1)*buffer_step]));
+    maxCalc = max(maxCalc, abs(localFFTSamples[i*buffer_step]), abs(localFFTSamples[(i+1)*buffer_step]));
   }  
   fill(255, 128);
   text("(Autoscaling) Sample History", 5, (D_IDX-1)*height5 + TEXT_HEIGHT);  
@@ -265,10 +241,10 @@ void drawSpectrum(int D_IDX){
   noFill();
   float centerFrequency = 0;
   float centerPower = 0;
-  for(int i = 0; i < fftCalc.specSize(); i++)
+  for(int i = 0; i < fftInst.specSize(); i++)
   {
-    if(getBand(i, fftCalc) != -1) {
-      setBandColor(getBand(i, fftCalc), true);
+    if(getBand(i, fftInst) != -1) {
+      setBandColor(getBand(i, fftInst), true);
     }
     else{
       stroke(0, 62, 255);
@@ -278,11 +254,11 @@ void drawSpectrum(int D_IDX){
     // set the stroke color to red
     if ( i == mouseX )
     {
-      centerFrequency = fftCalc.indexToFreq(i);
-      centerPower = fftCalc.getBand(i);
+      centerFrequency = fftInst.indexToFreq(i);
+      centerPower = fftInst.getBand(i);
       stroke(255, 255, 255);
     }
-    line(i, D_IDX*height5, i, D_IDX*height5 - min(MAX_HEIGHT, MAX_HEIGHT*fftCalc.getBand(i)/spectrumScale));
+    line(i, D_IDX*height5, i, D_IDX*height5 - min(MAX_HEIGHT, MAX_HEIGHT*fftInst.getBand(i)/spectrumScale));
   }    
   fill(255, 128);
   text("(Autoscaling) Linear Freq: " + String.format("%.1f",centerFrequency) + " Power " + String.format("%.1f",centerPower), 5, (D_IDX-1)*height5 + TEXT_HEIGHT);
@@ -292,12 +268,12 @@ void drawHighResSpectrum(int D_IDX){
   noStroke();  
   float centerFrequency = 0;
   float centerPower = 0;
-  int max_index = fftSlow.freqToIndex(MAX_FREQ);
+  int max_index = fftLonger.freqToIndex(MAX_FREQ);
   int w = ceil( float(width) / (max_index+1) );
   for(int i = 0; i < max_index; i++)
   {
-    if(getBand(i, fftSlow) != -1) {
-      setBandColor(getBand(i, fftSlow), false);
+    if(getBand(i, fftLonger) != -1) {
+      setBandColor(getBand(i, fftLonger), false);
     }
     else{
       fill(0, 62, 255);        
@@ -307,12 +283,12 @@ void drawHighResSpectrum(int D_IDX){
     if ( mouseX >= i*w && mouseX < i*w + w)
     {
       // Insert label text
-      centerFrequency = fftSlow.indexToFreq(i);  
-      centerPower = fftSlow.getBand(i);
+      centerFrequency = fftLonger.indexToFreq(i);  
+      centerPower = fftLonger.getBand(i);
       // Set up fill for rectangle
       fill(255, 255, 255);        
     }
-    rect(i*w, D_IDX*height5, i*w+w, D_IDX*height5 - min(MAX_HEIGHT, MAX_HEIGHT*fftSlow.getBand(i)/highResSpectrumScale));
+    rect(i*w, D_IDX*height5, i*w+w, D_IDX*height5 - min(MAX_HEIGHT, MAX_HEIGHT*fftLonger.getBand(i)/highResSpectrumScale));
   }
   fill(255, 128);    
   text("(Autoscaling) 0-100 Hz Freq: " + String.format("%.1f",centerFrequency) + " Power " + String.format("%.1f",centerPower), 5, (D_IDX-1)*height5 + TEXT_HEIGHT);
@@ -327,11 +303,11 @@ void calcAndDrawEEGBins(int D_IDX){
   }
   
   // Assign the FFT power to the appropriate ranges
-  int max_index = fftSlow.freqToIndex(highlightEnds[highlightEnds.length-1]);
+  int max_index = fftLonger.freqToIndex(highlightEnds[highlightEnds.length-1]);
   for(int i = 0; i <= max_index; i++){
     for(int h_i=0; h_i<highlightStarts.length; h_i++){
-      if(fftSlow.freqToIndex(highlightStarts[h_i]) <= i && fftSlow.freqToIndex(highlightEnds[h_i]) > i){
-        currPowers[h_i] += fftSlow.getBand(i);
+      if(fftLonger.freqToIndex(highlightStarts[h_i]) <= i && fftLonger.freqToIndex(highlightEnds[h_i]) > i){
+        currPowers[h_i] += fftLonger.getBand(i);
         currCounts[h_i] += 1;
       }
     }   
