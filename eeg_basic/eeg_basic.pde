@@ -23,7 +23,7 @@ int instBufferSize   =  1024;
 int longerBufferSize = 32768;
 float sampleRate     = 22050;
 NotchFilter notch;
-boolean notchEnabled =  true;
+boolean notchEnabled =  false;
 float NOTCH_FREQ     =    50;
 float NOTCH_BW       =     1;
 
@@ -45,18 +45,17 @@ float []  avgPowers = new float[highlightStarts.length];
 
 // DISPLAY DECLARATIONS
 // -------------------------
-// REDO ALL THIS
-float averageScaling = 0.0;
-float scalingBalance = 0.90;
 float height5; // Height of one of the display bands
-static int TEXT_HEIGHT = 25; // Size of text in pixels
-static int MAX_HEIGHT = 160-int(TEXT_HEIGHT*1.1); // Drawable size of a band
-float fullSpecBalance = 0.99; // Balance for autoscaling - 99% previous, 1% current
-float fullSpectrumScale = 0.1; // Spectrum display rescaling factor
-float EEGSpecBalance = 0.95; // Balance for autoscaling the 0-100 range: 95% previous, 5% current
-float EEGSpectrumScale = 0.1; // Spectrum display rescaling factor
-float lineScale = 20;
-float lineBalance = 0.95;
+static int TEXT_HEIGHT  =   25; // Size of text in pixels
+static int MAX_HEIGHT   = 160-int(TEXT_HEIGHT*1.1); // Drawable size of a band
+float lineScale = 20;  // Initial scaling factor for the line drawing 
+float lineBalance = 0.95; // Initial mixing factor for time averaging
+float fullSpecBalance   = 0.99; // Balance for autoscaling - 99% previous, 1% current
+float fullSpectrumScale =  0.1; // Spectrum display rescaling factor
+float EEGSpecBalance    = 0.95; // Balance for autoscaling the 0-100 range: 95% previous, 5% current
+float EEGSpectrumScale  =  0.1; // Spectrum display rescaling factor
+float EEGBarScaling = 0.0; // Initial scaling factor for the EEG bars
+float EEGBarBalance = 0.90; // Balance factor for adding in new input into the bar 
 
 // Instantiate the special FFT shift-buffer
 FFTBuf longFFTBuf = new FFTBuf(longerBufferSize);
@@ -109,7 +108,7 @@ void draw(){
   // The argument is which row it should occupy
   drawLinePlot(2);
   drawSpectrum(3);
-  drawHighResSpectrum(4);
+  drawEEGSpectrum(4);
   calcAndDrawEEGBins(5);
 }
 
@@ -224,7 +223,7 @@ void drawLinePlot(int D_IDX){
   float maxCalc = 0;
   for(int i = 0; i < width-1; i++)
   {      
-    float brightnessScale = 0.4+0.6*(float(i)/width); // Choose a fading brightness color
+    float brightnessScale = 0.4+0.6*(float(i)/width); // Choose a fading brightness color, from 0.4 to 1.0
     stroke(255*brightnessScale, 255*brightnessScale, 255);      
     float height1 = height5/2 + constrain(height5/2*localFFTSamples[i*buffer_step]/lineScale, -height5/2, height5/2);
     float height2 = height5/2 + constrain(height5/2*localFFTSamples[(i+1)*buffer_step]/lineScale, -height5/2, height5/2);
@@ -264,7 +263,7 @@ void drawSpectrum(int D_IDX){
   text("(Autoscaling) Linear Freq: " + String.format("%.1f",centerFrequency) + " Power " + String.format("%.1f",centerPower), 5, (D_IDX-1)*height5 + TEXT_HEIGHT);
 }
 
-void drawHighResSpectrum(int D_IDX){
+void drawEEGSpectrum(int D_IDX){
   noStroke();  
   float centerFrequency = 0;
   float centerPower = 0;
@@ -324,8 +323,8 @@ void calcAndDrawEEGBins(int D_IDX){
     maxPower = max(maxPower,avgPowers[i]);    
   }  
   // Adjust the scaling of the bars
-  averageScaling = max(maxPower*1, averageScaling);
-  averageScaling = averageScaling*scalingBalance + (1-scalingBalance)*maxPower;  
+  EEGBarScaling = max(maxPower*1, EEGBarScaling);
+  EEGBarScaling = EEGBarScaling*EEGBarBalance + (1-EEGBarBalance)*maxPower;  
   
   // Redraw the bands
   int w = ceil( float(width) / (highlightStarts.length+1) );  
@@ -339,7 +338,7 @@ void calcAndDrawEEGBins(int D_IDX){
       selected = h_i; // Store which band we've selected        
       fill(255, 255, 255); // Change the highlight fill
     }     
-    rect(h_i*w, D_IDX*height5, h_i*w+w, D_IDX*height5 - min(MAX_HEIGHT, avgPowers[h_i]/averageScaling * MAX_HEIGHT));
+    rect(h_i*w, D_IDX*height5, h_i*w+w, D_IDX*height5 - min(MAX_HEIGHT, avgPowers[h_i]/EEGBarScaling * MAX_HEIGHT));
   }
   fill(255, 128);    
   text("(Autoscaling) Spectrum Selected Frequency: " + highlightStarts[selected] + " - " + highlightEnds[selected], 
