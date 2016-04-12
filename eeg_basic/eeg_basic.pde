@@ -258,7 +258,7 @@ void drawSpectrum(int D_IDX){
       centerPower = fftInst.getBand(i);
       stroke(255, 255, 255);
     }
-    line(i, D_IDX*height5, i, D_IDX*height5 - min(MAX_HEIGHT, MAX_HEIGHT*fftInst.getBand(i)/spectrumScale));
+    line(i, D_IDX*height5, i, D_IDX*height5 - min(MAX_HEIGHT, MAX_HEIGHT*fftInst.getBand(i)/fullSpectrumScale));
   }    
   fill(255, 128);
   text("(Autoscaling) Linear Freq: " + String.format("%.1f",centerFrequency) + " Power " + String.format("%.1f",centerPower), 5, (D_IDX-1)*height5 + TEXT_HEIGHT);
@@ -288,7 +288,7 @@ void drawHighResSpectrum(int D_IDX){
       // Set up fill for rectangle
       fill(255, 255, 255);        
     }
-    rect(i*w, D_IDX*height5, i*w+w, D_IDX*height5 - min(MAX_HEIGHT, MAX_HEIGHT*fftLonger.getBand(i)/highResSpectrumScale));
+    rect(i*w, D_IDX*height5, i*w+w, D_IDX*height5 - min(MAX_HEIGHT, MAX_HEIGHT*fftLonger.getBand(i)/EEGSpectrumScale));
   }
   fill(255, 128);    
   text("(Autoscaling) 0-100 Hz Freq: " + String.format("%.1f",centerFrequency) + " Power " + String.format("%.1f",centerPower), 5, (D_IDX-1)*height5 + TEXT_HEIGHT);
