@@ -42,6 +42,10 @@ float balance = 0.95; // Ratio of running average (95% previous, 5% new)
 float [] currPowers = new float[highlightStarts.length];
 int   [] currCounts = new   int[highlightStarts.length];
 float []  avgPowers = new float[highlightStarts.length];
+//   File save
+float curr_file_idx = 0;
+
+
 
 // DISPLAY DECLARATIONS
 // -------------------------
@@ -136,6 +140,8 @@ void drawTopText(){
   fill(255, 128); // Color for text
   // Arguments for text is (text, x start, y start)
   text("EEG Spectrum Analyzer", width/4, 0.5*TEXT_HEIGHT);  
+  text("Saving [k] " + (longFFTBuf.fileSaving ? "(ON): " + 
+    String.format("%03.0f",curr_file_idx)+".txt" : "(OFF): "), 5, 1.5*TEXT_HEIGHT);  
   text("FFT res. [q/w] (Hz): " + String.format("%.2f",line_in.sampleRate()/longerBufferSize,3,1), 5, 2.5*TEXT_HEIGHT);
   text("FFT res. [q/w] (s): " + String.format("%.2f",longerBufferSize/line_in.sampleRate(),3,1), 5, 3.5*TEXT_HEIGHT);
   text("Averaging [a/s] (%): " + String.format("%02.2f",balance*100), 5, 4.5*TEXT_HEIGHT);
@@ -188,6 +194,17 @@ void keyPressed()
   if ( key == 's' ){
     balance = min(balance+0.005,1);
   }    
+  if ( key == 'k' ){
+    if(longFFTBuf.fileSaving){
+      longFFTBuf.output.flush();
+      longFFTBuf.output.close();      
+    }
+    else {
+      curr_file_idx += 1;            
+      longFFTBuf.output = createWriter("samples_" + String.format("%03.0f",curr_file_idx)+".txt");
+    }
+    longFFTBuf.fileSaving = !longFFTBuf.fileSaving;
+  }       
 }
 
 // DISPLAY ROUTINES
